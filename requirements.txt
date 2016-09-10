@@ -2,3 +2,4 @@ imgurpython==1.1.6
 Jinja2==2.8
 pyquery==1.2.13
 luigi==2.3.1
+aiohttp==0.22.5

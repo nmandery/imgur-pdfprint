@@ -3,10 +3,10 @@
 
 from imgurpython import ImgurClient
 from imgurpython.helpers.error import ImgurClientError
-import requests
 from jinja2 import Template
 from pyquery import PyQuery as pq
 import luigi
+import aiohttp
 
 import sys
 import os
@@ -17,7 +17,7 @@ import tempfile
 import codecs
 import re
 import subprocess
-
+import asyncio
 
 img_dir = 'img'
 index_md = 'index.asciidoc'
@@ -67,6 +67,10 @@ def temp_work_dir():
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
 
 class BaseObject(object):
     id=None
@@ -170,6 +174,20 @@ def fetch(url):
     else: # imgur
         return fetch_imgur(url)
 
+async def download_to(session, url, filename):
+    chunk_size = 60 * 1024
+    with aiohttp.Timeout(120):
+        async with session.get(url) as response:
+            if response.status >= 400:
+                raise Exception("Could not download {0}: HTTP status {1}".format(url, response.status))
+            with open(filename, 'wb') as fd:
+                while True:
+                    chunk = await response.content.read(chunk_size)
+                    if not chunk:
+                        break
+                    #print("writing {0} bytes to {1}".format(len(chunk), filename))
+                    fd.write(chunk)
+    
 
 class GalleryToPdfTask(luigi.Task):
     url = luigi.Parameter()
@@ -198,15 +216,22 @@ class GalleryToPdfTask(luigi.Task):
         with temp_work_dir() as work_dir:
             os.makedirs(os.path.join(work_dir, img_dir))
             a = self.get_album()
-            
-            for idx, i in enumerate(a.images):
-                self.set_status_message('Downloading {0}/{1}: {2}'.format(idx+1, len(a.images), i.link))
-                with open(os.path.join(work_dir, img_dir, i.filename), 'wb') as fh:
-                    r = requests.get(i.link)
-                    r.raise_for_status()
-                    for chunk in r.iter_content(chunk_size=60 * 1024):
-                        if chunk:
-                            fh.write(chunk)
+           
+            loop = asyncio.get_event_loop()
+            with aiohttp.ClientSession(loop=loop) as session:
+                count_img = len(a.images)
+                for chnk in chunks(list(enumerate(a.images)), 10):
+                    futures = []
+                    for idx, i in chnk:
+                        msg = 'Downloading {0}/{1}: {2}'.format(idx+1, count_img, i.link)
+                        print(msg)
+                        self.set_status_message(msg)
+
+                        futures.append(download_to(session, i.link, os.path.join(work_dir, img_dir, i.filename)))
+                    if futures:
+                        outer = asyncio.gather(*futures)
+                        loop.run_until_complete(outer)
+            loop.close()
 
             document_file = os.path.join(work_dir, index_md)
             with codecs.open(document_file, 'w', 'utf8') as fh:
