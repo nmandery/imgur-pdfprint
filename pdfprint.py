@@ -48,6 +48,19 @@ image::{{i.file}}[align="center", scaledwidth=90%, link="{{i.link}}"]
 {{i.description}}
 {% endif %}
 {% endfor %}
+
+{% if a.comments %}
+== Comments
+
+{% for c in a.comments%}
+{% if c.content %}
+[quote, {%if c.author%}{{c.author}}{%else%}unknown{%endif%}]
+____
+{{c.content}}
+____
+{% endif %}
+{% endfor %}
+{% endif %}
 '''
 
 def get_env(var_name):
@@ -77,8 +90,13 @@ class BaseObject(object):
     title=None
     description=None
 
+class Comment(object):
+    author=None
+    content=None
+
 class Album(BaseObject):
     images=[]
+    comments=[]
     link=None
 
     @property
@@ -126,6 +144,19 @@ def fetch_imgur(url):
         img.description = i.get('description')
         img.link = i.get('link')
         album.images.append(img)
+
+    try:
+        g = client.make_request('GET', imgur_path+'/comments')
+        if g:
+            for c in g:
+                comment = Comment()
+                comment.content = c.get('comment')
+                comment.author = c.get('author')
+                album.comments.append(comment)
+    except ImgurClientError as e:
+        if e.status_code != 404:
+            raise
+            
     return album
 
 
