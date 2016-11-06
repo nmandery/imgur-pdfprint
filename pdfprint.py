@@ -5,7 +5,6 @@ from imgurpython import ImgurClient
 from imgurpython.helpers.error import ImgurClientError
 from jinja2 import Template
 from pyquery import PyQuery as pq
-import luigi
 import aiohttp
 
 import sys
@@ -119,7 +118,7 @@ class Img(BaseObject):
 
 def fetch_imgur(url):
     album = Album()
-    album_id = url.split('/')[-1]
+    album_id = url.split('/')[-1].split('#')[0]
     client = make_imgur_client()
     g = None
     imgur_path = None
@@ -219,69 +218,39 @@ async def download_to(session, url, filename):
                     #print("writing {0} bytes to {1}".format(len(chunk), filename))
                     fd.write(chunk)
     
+def convert(url):
+    print('Converting {0}'.format(url))
+    a = fetch(url)
 
-class GalleryToPdfTask(luigi.Task):
-    url = luigi.Parameter()
-    _album = None
+    with temp_work_dir() as work_dir:
+        os.makedirs(os.path.join(work_dir, img_dir))
+       
+        loop = asyncio.get_event_loop()
+        with aiohttp.ClientSession(loop=loop) as session:
+            count_img = len(a.images)
+            for chnk in chunks(list(enumerate(a.images)), 10):
+                futures = []
+                for idx, i in chnk:
+                    msg = 'Downloading {0}/{1}: {2}'.format(idx+1, count_img, i.link)
+                    print(msg)
 
-    def __init__(self, *a, **kw):
-        super(GalleryToPdfTask, self).__init__(*a, **kw)
-        self._album = None
+                    futures.append(download_to(session, i.link, os.path.join(work_dir, img_dir, i.filename)))
+                if futures:
+                    outer = asyncio.gather(*futures)
+                    loop.run_until_complete(outer)
+        loop.close()
 
-    def get_album(self):
-        if not self._album:
-            self._album = fetch(self.url)
-        return self._album
-
-    @property
-    def output_filename(self):
-        return '{0}.pdf'.format(self.get_album().filename)
-
-    def requires(self):
-        return []
-
-    def output(self):
-        return luigi.LocalTarget(self.output_filename)
-
-    def run(self):
-        with temp_work_dir() as work_dir:
-            os.makedirs(os.path.join(work_dir, img_dir))
-            a = self.get_album()
-           
-            loop = asyncio.get_event_loop()
-            with aiohttp.ClientSession(loop=loop) as session:
-                count_img = len(a.images)
-                for chnk in chunks(list(enumerate(a.images)), 10):
-                    futures = []
-                    for idx, i in chnk:
-                        msg = 'Downloading {0}/{1}: {2}'.format(idx+1, count_img, i.link)
-                        print(msg)
-                        self.set_status_message(msg)
-
-                        futures.append(download_to(session, i.link, os.path.join(work_dir, img_dir, i.filename)))
-                    if futures:
-                        outer = asyncio.gather(*futures)
-                        loop.run_until_complete(outer)
-            loop.close()
-
-            document_file = os.path.join(work_dir, index_md)
-            with codecs.open(document_file, 'w', 'utf8') as fh:
-                fh.write(Template(TEMPLATE).render(a=a))
-                fh.flush()
-                
-                pdf_file = self.output_filename
-                # TODO: use output LocalTarget and write to it
-                subprocess.check_call(['asciidoctor-pdf', '-o', pdf_file, document_file], 
-                        stdout=sys.stdout, stderr=sys.stderr)
-                self.set_status_message("Created {0}".format(pdf_file))
+        document_file = os.path.join(work_dir, index_md)
+        with codecs.open(document_file, 'w', 'utf8') as fh:
+            fh.write(Template(TEMPLATE).render(a=a))
+            fh.flush()
             
+            pdf_file = '{0}.pdf'.format(a.filename)
+            subprocess.check_call(['asciidoctor-pdf', '-o', pdf_file, document_file], 
+                    stdout=sys.stdout, stderr=sys.stderr)
+            print("Created {0}".format(pdf_file))
+
 
 if __name__ == '__main__':
-    # hide luigi specific stuff from the cli interface
-    if not 'GalleryToPdfTask' in sys.argv:
-        sys.argv.insert(1, 'GalleryToPdfTask')
-    if not '--local-scheduler' in sys.argv:
-        sys.argv.append('--local-scheduler')
-
-    luigi.run()
-
+    for url in sys.argv[1:]:
+        convert(url)

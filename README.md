@@ -36,7 +36,7 @@ environment variables. Example (bash):
 
 ## Usage
 
-    python ./pdfprint.py --url http://imgur.com/a/XNM1x
+    python ./pdfprint.py http://imgur.com/a/XNM1x
 
 
 The PDF file will be put into the current directory.
