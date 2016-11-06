@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 # coding: utf8
 
-from imgurpython import ImgurClient
-from imgurpython.helpers.error import ImgurClientError
 from jinja2 import Template
-from pyquery import PyQuery as pq
 import aiohttp
 
 import sys
@@ -69,6 +66,8 @@ def get_env(var_name):
     return val
 
 def make_imgur_client():
+    from imgurpython import ImgurClient
+
     client_id = get_env("IMGUR_CLIENT_ID")
     client_secret = get_env("IMGUR_CLIENT_SECRET")
     return ImgurClient(client_id, client_secret)
@@ -117,6 +116,8 @@ class Img(BaseObject):
 
 
 def fetch_imgur(url):
+    from imgurpython.helpers.error import ImgurClientError
+
     album = Album()
     album_id = url.split('/')[-1].split('#')[0]
     client = make_imgur_client()
@@ -174,6 +175,7 @@ def fetch_simplecove(url):
                         ts.append(txt)
         return seperator.join(ts) or ''
 
+    from pyquery import PyQuery as pq
     doc = pq(url=url)
     album.title = text_agg(doc(".titlearea h1"), seperator=' ')
     album.description = text_agg(doc(".projectdescriptioncontainer p"))
