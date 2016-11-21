@@ -45,6 +45,9 @@ image::{{i.file}}[align="center", scaledwidth={{i.scaledwidth}}%, link="{{i.link
 {%if i.description %}
 {{i.description}}
 {% endif %}
+
+<<<
+
 {% endfor %}
 
 {% if a.comments %}
