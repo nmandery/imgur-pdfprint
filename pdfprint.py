@@ -14,6 +14,8 @@ import codecs
 import re
 import subprocess
 import asyncio
+import struct
+import imghdr
 
 img_dir = 'img'
 index_md = 'index.asciidoc'
@@ -35,7 +37,7 @@ From {{a.link}}
 
 
 {% for i in a.images%}
-image::{{i.file}}[align="center", scaledwidth=90%, link="{{i.link}}"]
+image::{{i.file}}[align="center", scaledwidth={{i.scaledwidth}}%, link="{{i.link}}"]
 {% if i.title %}
 {{i.title}}
 
@@ -65,6 +67,42 @@ def get_env(var_name):
         raise Exception("environment variable {0} must be set".format(var_name))
     return val
 
+def get_image_size(fname):
+    '''Determine the image type of fhandle and return its size.
+    from draco
+    http://stackoverflow.com/questions/8032642/how-to-obtain-image-size-using-standard-python-class-without-using-external-lib'''
+    with open(fname, 'rb') as fhandle:
+        head = fhandle.read(24)
+        if len(head) != 24:
+            return
+        if imghdr.what(fname) == 'png':
+            check = struct.unpack('>i', head[4:8])[0]
+            if check != 0x0d0a1a0a:
+                return
+            width, height = struct.unpack('>ii', head[16:24])
+        elif imghdr.what(fname) == 'gif':
+            width, height = struct.unpack('<HH', head[6:10])
+        elif imghdr.what(fname) == 'jpeg':
+            try:
+                fhandle.seek(0) # Read 0xff next
+                size = 2
+                ftype = 0
+                while not 0xc0 <= ftype <= 0xcf:
+                    fhandle.seek(size, 1)
+                    byte = fhandle.read(1)
+                    while ord(byte) == 0xff:
+                        byte = fhandle.read(1)
+                    ftype = ord(byte)
+                    size = struct.unpack('>H', fhandle.read(2))[0] - 2
+                # We are at a SOFn block
+                fhandle.seek(1, 1)  # Skip `precision' byte.
+                height, width = struct.unpack('>HH', fhandle.read(4))
+            except Exception: #IGNORE:W0703
+                return
+        else:
+            return
+        return width, height
+
 def make_imgur_client():
     from imgurpython import ImgurClient
 
@@ -77,6 +115,13 @@ def temp_work_dir():
     directory = tempfile.mkdtemp(prefix='pdfprint')
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
+
+@contextmanager
+def chdir(d):
+    old_dir=os.getcwd()
+    os.chdir(d)
+    yield
+    os.chdir(old_dir)
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
@@ -105,11 +150,26 @@ class Album(BaseObject):
 
 class Img(BaseObject):
     link = None
+    default_scaledwith = 90
 
     @property
     def filename(self):
         return self.link[self.link.rindex('/')+1:]
 
+    @property
+    def scaledwidth(self):
+        def ratio(dims):
+            return float(dims[0]) / float(dims[1])
+        # scale for best fit in A4 paper
+        a4 = (210, 297)
+        img_size =get_image_size(os.path.join(img_dir, self.filename))
+
+        sf=1.0
+        if ratio(img_size) <= ratio(a4):
+            sf = ratio(img_size)/ratio(a4)
+
+        return int(self.default_scaledwith*sf)
+	
     @property
     def file(self):
         return os.path.join(img_dir, self.filename)
@@ -242,15 +302,15 @@ def convert(url):
                     loop.run_until_complete(outer)
         loop.close()
 
-        document_file = os.path.join(work_dir, index_md)
-        with codecs.open(document_file, 'w', 'utf8') as fh:
-            fh.write(Template(TEMPLATE).render(a=a))
-            fh.flush()
-            
-            pdf_file = '{0}.pdf'.format(a.filename)
-            subprocess.check_call(['asciidoctor-pdf', '-o', pdf_file, document_file], 
-                    stdout=sys.stdout, stderr=sys.stderr)
-            print("Created {0}".format(pdf_file))
+        pdf_file = os.path.join(os.getcwd(), '{0}.pdf'.format(a.filename))
+        with chdir(work_dir):
+            with codecs.open(index_md, 'w', 'utf8') as fh:
+                fh.write(Template(TEMPLATE).render(a=a))
+                fh.flush()
+                
+                subprocess.check_call(['asciidoctor-pdf', '-o', pdf_file, index_md], 
+                        stdout=sys.stdout, stderr=sys.stderr)
+                print("Created {0}".format(pdf_file))
 
 
 if __name__ == '__main__':
