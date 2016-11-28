@@ -149,12 +149,23 @@ class Album(BaseObject):
         filename = '{0}-{1}'.format(title, self.id) if title else self.id
         return re.sub(r'_{2,}','_', re.sub(r'[^a-zA-Z0-9_\-]', '_', filename.lower().strip()))
 
+    def apply_to_images(self, fn):
+        images_new = []
+        for i in self.images:
+            i_new = fn(i)
+            if i_new is not None:
+                images_new.append(i_new)
+        self.images = images_new
+
 class Img(BaseObject):
     link = None
     default_scaledwith = 90
+    _filename = None
 
     @property
     def filename(self):
+        if self._filename is not None:
+            return self._filename
         return self.link[self.link.rindex('/')+1:]
 
     @property
@@ -265,7 +276,14 @@ def fetch(url):
     if 'simplecove.com' in url:
         return fetch_simplecove(url)
     else: # imgur
-        return fetch_imgur(url)
+        a = fetch_imgur(url)
+
+        def choose_supported_format(img):
+            if img.link.endswith('.gifv'):
+                img.link = img.link.rstrip('v')
+            return img
+        a.apply_to_images(choose_supported_format)
+        return a
 
 async def download_to(session, url, filename):
     chunk_size = 60 * 1024
@@ -280,14 +298,27 @@ async def download_to(session, url, filename):
                         break
                     #print("writing {0} bytes to {1}".format(len(chunk), filename))
                     fd.write(chunk)
-    
+
+def convert_to_known_format(img):
+    fwoext, ext = os.path.splitext(img.filename)
+    if ext.lower() not in ('.jpg', '.jpeg', '.png'):
+        new_filename = "{0}.{1}".format(fwoext, 'png')
+        print('Converting {0} to {1}'.format(img.filename, new_filename))
+        
+        subprocess.check_call(['convert',
+                os.path.join(img_dir, img.filename) + '[0]', # only first frame of animated gifs etc
+                os.path.join(img_dir, new_filename)], 
+                stdout=sys.stdout, stderr=sys.stderr)
+        img._filename = new_filename
+    return img
+
 def convert(url):
     print('Converting {0}'.format(url))
     a = fetch(url)
 
     with temp_work_dir() as work_dir:
         os.makedirs(os.path.join(work_dir, img_dir))
-       
+
         loop = asyncio.get_event_loop()
         with aiohttp.ClientSession(loop=loop) as session:
             count_img = len(a.images)
@@ -305,10 +336,12 @@ def convert(url):
 
         pdf_file = os.path.join(os.getcwd(), '{0}.pdf'.format(a.filename))
         with chdir(work_dir):
+            a.apply_to_images(convert_to_known_format)
             with codecs.open(index_md, 'w', 'utf8') as fh:
                 fh.write(Template(TEMPLATE).render(a=a))
                 fh.flush()
                 
+                print('Rendering')
                 subprocess.check_call(['asciidoctor-pdf', '-o', pdf_file, index_md], 
                         stdout=sys.stdout, stderr=sys.stderr)
                 print("Created {0}".format(pdf_file))
