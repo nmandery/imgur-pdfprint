@@ -198,12 +198,9 @@ def fetch_imgur(url):
     try:
         imgur_path = 'gallery/album/%s' % album_id
         g = client.make_request('GET', imgur_path)
-    except ImgurClientError as e:
-        if e.status_code == 404:
-            imgur_path = 'album/%s' % album_id
-            g = client.make_request('GET', imgur_path)
-        else:
-            raise
+    except:
+        imgur_path = 'album/%s' % album_id
+        g = client.make_request('GET', imgur_path)
     album.link = 'http://imgur.com/' + imgur_path
 
     album.id = g.get('id')
@@ -225,9 +222,8 @@ def fetch_imgur(url):
                 comment.content = c.get('comment')
                 comment.author = c.get('author')
                 album.comments.append(comment)
-    except ImgurClientError as e:
-        if e.status_code != 404:
-            raise
+    except:
+        pass # no comments available
             
     return album
 
